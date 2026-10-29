@@ -1,0 +1,19 @@
+services:
+  tracker:
+    build: .
+    image: ai-usage-tracker
+    container_name: ai-usage-tracker
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - tracker-data:/data
+    environment:
+      POLL_INTERVAL_SECONDS: "300"
+      # Protect the dashboard (and the account connection) with a password:
+      # TRACKER_PASSWORD: "change-me"
+      # Try the dashboard with simulated data instead of a real account:
+      # DEMO_MODE: "true"
+
+volumes:
+  tracker-data:
