@@ -11,8 +11,24 @@ It runs as one small container with a SQLite database on a volume. Leave it runn
 
 ## Quick start
 
+A prebuilt image for `linux/amd64` and `linux/arm64` is published to GitHub Container Registry:
+
+```
+ghcr.io/xiidozen/aiusagetracker:latest
+```
+
+Run it in any container environment (Docker, Podman, Portainer, Unraid, TrueNAS, Kubernetes, …). It needs port `8080` and a persistent volume at `/data`:
+
 ```bash
-docker compose up -d --build
+docker run -d --name ai-usage-tracker --restart unless-stopped \
+  -p 8080:8080 -v ai-usage-tracker:/data \
+  ghcr.io/xiidozen/aiusagetracker:latest
+```
+
+Or with the included compose file:
+
+```bash
+docker compose up -d
 ```
 
 Open `http://<server>:8080`, click **Connect**, and sign in with your Claude account (see [Connecting your account](#connecting-your-account)). Readings start right away. Statistics fill in as sessions and weeks complete.
@@ -20,7 +36,7 @@ Open `http://<server>:8080`, click **Connect**, and sign in with your Claude acc
 To look around before connecting a real account, start it with simulated data:
 
 ```bash
-docker run --rm -p 8080:8080 -e DEMO_MODE=true $(docker build -q .)
+docker run --rm -p 8080:8080 -e DEMO_MODE=true ghcr.io/xiidozen/aiusagetracker:latest
 ```
 
 If the dashboard is reachable by anyone else, set `TRACKER_PASSWORD` in `docker-compose.yml`. That turns on HTTP Basic auth for the UI and the API. Put it behind a reverse proxy with HTTPS if it is exposed to the internet.
@@ -90,6 +106,18 @@ Things to keep in mind:
 - Utilization is reported in whole percents, so a single small session's weekly cost is rough. The ratio across many sessions is much steadier.
 - Anthropic changes limits from time to time (and may weight usage differently at peak hours). Per-session costs over time show when that happens. Use the range selector to compare periods.
 - The usage endpoint is the one Claude Code uses, not a documented public API. If its format changes, unknown fields are still stored raw in the database (for `RAW_RETENTION_DAYS`) and new limit windows are picked up automatically.
+
+## Image tags
+
+The [workflow](.github/workflows/docker-publish.yml) runs the tests and builds the image on every pull request. It publishes on every push to `main` and on version tags:
+
+| Tag | Points to |
+| --- | --- |
+| `latest` | The newest commit on `main`. |
+| `sha-<commit>` | One specific commit, for pinning. |
+| `1.2.3`, `1.2` | A release, when a `v1.2.3` git tag is pushed. |
+
+To build the image yourself instead, run `docker build -t ai-usage-tracker .` or uncomment `build: .` in `docker-compose.yml`.
 
 ## Development
 
