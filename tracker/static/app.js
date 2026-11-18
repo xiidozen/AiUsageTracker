@@ -135,7 +135,7 @@ function renderHeader() {
     message = isCodex ? "Polling is disabled in demo mode." : "Demo mode: these numbers are simulated. Remove DEMO_MODE to track your real account.";
   } else if (!s.auth.connected) {
     message = isCodex
-      ? s.auth.error || "Set CODEX_AUTH_FILE to connect your Codex CLI sign-in."
+      ? s.auth.error || "Connect your ChatGPT account to track Codex usage."
       : "Connect your Claude account to start tracking. Readings are collected from then on.";
   } else if (s.last_poll && !s.last_poll.ok) {
     message = `The last poll failed: ${s.last_poll.error}`;
@@ -703,7 +703,42 @@ function renderAccountStatus() {
 
 function renderCodexAccountStatus() {
   const auth = state.status?.auth;
-  $("#codex-account-status").textContent = auth?.error || (auth?.connected ? "Using the Codex CLI sign-in." : "No Codex sign-in configured.");
+  const available = state.status?.codex_device_login;
+  $("#codex-account-status").textContent = auth?.error || (auth?.connected ? "Connected to ChatGPT." : "No Codex sign-in configured.");
+  $("#codex-login-start").hidden = !available;
+  $("#codex-login-help").textContent = available
+    ? "Enable device-code sign-in in your ChatGPT security settings before connecting."
+    : "The tracker uses CODEX_AUTH_FILE when configured. Update that file to change the sign-in.";
+}
+
+async function signInToCodex() {
+  const button = $("#codex-login-start");
+  const step = $("#codex-device-step");
+  const code = $("#codex-device-code");
+  const msg = $("#codex-login-message");
+  button.disabled = true;
+  setMsg(msg, "Requesting a device code…", true);
+  try {
+    const login = await api("/api/auth/codex/login", { method: "POST", cache: "no-store" });
+    code.textContent = login.code;
+    $("#codex-device-link").href = login.url;
+    step.hidden = false;
+    setMsg(msg, "Waiting for you to finish signing in on OpenAI’s site…", true);
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const result = await api(`/api/auth/codex/login/${encodeURIComponent(login.attempt)}`, { cache: "no-store" });
+      if (result.status === "connected") break;
+      if (result.status === "failed") throw new Error(result.error);
+    }
+    setMsg(msg, "Signed in. Your usage will appear after the next poll.", true);
+    await loadStatus();
+  } catch (err) {
+    setMsg(msg, err.message, false);
+  } finally {
+    step.hidden = true;
+    code.textContent = "";
+    button.disabled = false;
+  }
 }
 
 function openAccount() {
@@ -725,6 +760,7 @@ function setMsg(el, text, ok) {
 
 function setupAccount() {
   $("#account-btn").addEventListener("click", openAccount);
+  $("#codex-login-start").addEventListener("click", signInToCodex);
   $("#account-close").addEventListener("click", () => $("#account").close());
   let pendingState = null;
   $("#open-signin").addEventListener("click", async () => {

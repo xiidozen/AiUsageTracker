@@ -66,9 +66,20 @@ The usage endpoint accepts a Claude OAuth token with the `user:profile` scope. T
 
 The **ChatGPT (Codex)** dashboard tracks the Codex quota on your ChatGPT subscription. It uses the same rate-limit endpoint as the Codex CLI, which is outside the public OpenAI API. Its readings, history and CSV exports are separate from Claude's. Regular ChatGPT conversation limits and OpenAI API billing are outside this integration. [Codex usage client](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs)
 
-1. Sign in to the Codex CLI with ChatGPT on the tracker host. With file-based credential storage, Codex saves the sign-in to `~/.codex/auth.json` by default. For a keyring-based login, set `cli_auth_credentials_store = "file"` in the Codex configuration and sign in again.
-2. Set `CODEX_AUTH_FILE` to the path of that file. For Docker Compose, uncomment the Codex mount and environment setting in `docker-compose.yml`, adjusting the host path if needed. The container runs as UID 10001 by default. Use `user:` to match the file owner if needed and ensure that user can write to the data volume. Keep the credential file private.
-3. Recreate the Compose container with `docker compose up -d` to apply the settings. For a local installation, restart the tracker with the updated environment. Open the dashboard, select **ChatGPT (Codex)**, and click **Poll now** for an immediate reading. The tracker rereads the file on every poll. Codex manages token refresh, so keep the host sign-in current. If usage polling reports an expired or rejected sign-in, sign in again in the Codex CLI.
+For an existing Docker Compose deployment, remove `CODEX_AUTH_FILE` from the service environment if you previously configured it. Then pull the updated image and recreate the container.
+
+```bash
+docker compose pull tracker
+docker compose up -d tracker
+```
+
+1. Enable device-code sign-in in your ChatGPT security settings. For a managed workspace, an admin may need to enable it. [OpenAI authentication guide](https://developers.openai.com/codex/auth)
+2. In the tracker, select **ChatGPT (Codex) → Account → Sign in with ChatGPT**. Open the OpenAI sign-in link and enter the one-time code shown in the tracker.
+3. Return to the tracker to see the connection status. Polling starts automatically, and **Poll now** requests an immediate reading.
+
+The Docker image includes the Codex CLI, and the login is saved to `/data/codex/auth.json` on the persistent volume. The tracker asks Codex to refresh the managed login if an access token expires. For a local Python installation, put the Codex CLI on the tracker process's `PATH` to use the same sign-in flow.
+
+You can also supply an existing file-based Codex CLI sign-in through `CODEX_AUTH_FILE`. Copy `~/.codex/auth.json` to the host over SSH if needed. For Docker Compose, uncomment the optional Codex directory mount and environment setting and adjust the host path. The container runs as UID 10001 by default. Use `user:` to match the file owner if needed and ensure that user can write to the data volume. The tracker reads an external file on each poll and leaves token refresh to the CLI that owns it. Keep the file private.
 
 Reported time windows vary by plan. The tracker displays weekly-only limits when that is what Codex reports.
 
@@ -86,7 +97,7 @@ Reported time windows vary by plan. The tracker displays weekly-only limits when
 | `CLAUDE_CREDENTIALS_FILE` | unset | Path to a Claude Code `.credentials.json` to read tokens from. |
 | `CLAUDE_CREDENTIALS_FILE_REFRESH` | `false` | Let the tracker refresh that file's token and write it back (rotates Claude Code's token). |
 | `CLAUDE_OAUTH_TOKEN` | unset | A raw access token (not refreshed). |
-| `CODEX_AUTH_FILE` | unset | Path to a Codex CLI `auth.json` from a ChatGPT sign-in. Enables Codex polling when set. |
+| `CODEX_AUTH_FILE` | unset | Optional external Codex CLI `auth.json`. Takes precedence over web sign-in and is read-only. |
 | `DEMO_MODE` | `false` | Fill an empty database with simulated usage and disable polling. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `USAGE_URL`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_REDIRECT_URI`, `OAUTH_CLIENT_ID`, `OAUTH_SCOPES` | Claude Code's values | Overrides in case the endpoints move. |

@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, analytics, codex
+from .codex_login import CodexLogin
 from .config import Settings
 from .db import Database
 from .oauth import AuthError, CredentialStore
@@ -48,7 +49,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     poller = Poller(settings, db, credentials)
     demo = os.environ.get("DEMO_MODE", "").lower() in {"1", "true", "yes", "on"}
     codex_db = Database(settings.data_dir / "codex-usage.db")
-    codex_credentials = codex.CodexCredentials(settings.codex_auth_file)
+    def codex_connected() -> None:
+        if settings.poller_enabled:
+            if codex_poller.status()["enabled"]:
+                codex_poller.trigger()
+            else:
+                codex_poller.start()
+
+    codex_home = settings.data_dir / "codex"
+    codex_login = None if settings.codex_auth_file or demo else CodexLogin(codex_home, codex_connected)
+    codex_credentials = codex.CodexCredentials(
+        settings.codex_auth_file or codex_home / "auth.json",
+        refresh=codex_login.refresh if codex_login else None,
+    )
     codex_poller = Poller(settings, codex_db, codex_credentials)
     providers = {
         "claude": (db, credentials, poller),
@@ -82,11 +95,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             log.info("DEMO_MODE: the poller is disabled")
         elif settings.poller_enabled:
             poller.start()
-            if settings.codex_auth_file:
+            if settings.codex_auth_file or (codex_home / "auth.json").is_file():
                 codex_poller.start()
         try:
             yield
         finally:
+            if codex_login:
+                await codex_login.stop()
             await poller.stop()
             await codex_poller.stop()
 
@@ -134,6 +149,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "now": time.time(),
             "demo": demo,
             "auth": credentials.status(),
+            "codex_device_login": provider == "codex" and codex_login is not None,
             "poller": poller.status(),
             "last_poll": None
             if last_any is None
@@ -175,6 +191,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if demo:
             raise HTTPException(400, "Polling is disabled in demo mode")
         return await providers[provider][2].poll_once()
+
+    @app.post("/api/auth/codex/login")
+    async def codex_login_start():
+        if codex_login is None:
+            raise HTTPException(400, "Codex sign-in is unavailable in demo mode or with CODEX_AUTH_FILE set.")
+        return JSONResponse(await codex_login.start(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/auth/codex/login/{attempt}")
+    async def codex_login_status(attempt: str):
+        if codex_login is None or attempt != codex_login.attempt:
+            raise HTTPException(404, "Codex sign-in session expired. Start again to get a new code.")
+        return JSONResponse(codex_login.state, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/auth/login")
     def auth_login():

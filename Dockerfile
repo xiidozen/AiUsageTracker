@@ -1,9 +1,26 @@
+FROM --platform=$BUILDPLATFORM python:3.12-slim AS codex-download
+
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && case "$TARGETARCH" in \
+        amd64) arch=x86_64; checksum=9af4d751fce183faedea629437d5252dbf458eeb04130cf4f97be844621ea985 ;; \
+        arm64) arch=aarch64; checksum=97b97d87eea075c5cb7709c7f6156a451622a7667953ecda40e0276637196f3f ;; \
+        *) exit 1 ;; \
+    esac \
+    && asset="codex-${arch}-unknown-linux-musl" \
+    && curl -fsSL --retry 3 "https://github.com/openai/codex/releases/download/rust-v0.169.0/${asset}.tar.gz" -o /tmp/codex.tar.gz \
+    && echo "$checksum  /tmp/codex.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/codex.tar.gz -C /tmp "$asset" \
+    && install -m 0755 "/tmp/$asset" /usr/local/bin/codex
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
     PORT=8080
+
+COPY --from=codex-download /usr/local/bin/codex /usr/local/bin/codex
 
 WORKDIR /app
 COPY requirements.txt .

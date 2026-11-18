@@ -17,17 +17,20 @@ WINDOW_NAMES = {18000: "five_hour", 604800: "seven_day"}
 
 
 class CodexCredentials:
-    def __init__(self, path: str):
-        self.path = Path(path) if path else None
+    def __init__(self, path: str | Path, *, refresh=None):
+        self.path = Path(path)
+        self.refresh = refresh
         self.last_error: str | None = None
 
     def current(self) -> dict | None:
-        if self.path is None:
-            return None
         try:
             body = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            if self.refresh is not None:
+                return None
+            raise AuthError("Could not find CODEX_AUTH_FILE. Check the path and file permissions.") from None
         except (OSError, ValueError) as exc:
-            raise AuthError("Could not read CODEX_AUTH_FILE. Check the path and file permissions.") from exc
+            raise AuthError("Could not read the Codex sign-in. Check the file and its permissions.") from exc
         tokens = body.get("tokens") if isinstance(body, dict) else None
         token = tokens.get("access_token") if isinstance(tokens, dict) else None
         if not isinstance(token, str) or not token.strip():
@@ -40,22 +43,33 @@ class CodexCredentials:
             error = self.last_error
         except AuthError as exc:
             connected, error = False, str(exc)
-        return {"connected": connected, "source": "codex_file", "can_refresh": False, "error": error}
+        return {
+            "connected": connected,
+            "source": "codex_managed" if self.refresh else "codex_file",
+            "can_refresh": self.refresh is not None,
+            "error": error,
+        }
 
     async def fetch_usage(self, client: httpx.AsyncClient) -> dict:
-        tokens = self.current()
-        if tokens is None:
-            raise AuthError("Set CODEX_AUTH_FILE to your Codex auth.json.")
-        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-        account = tokens.get("account_id")
-        if isinstance(account, str) and account:
-            headers["ChatGPT-Account-ID"] = account
+        async def get():
+            tokens = self.current()
+            if tokens is None:
+                raise AuthError("Sign in to ChatGPT from the Codex account dialog.")
+            headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+            account = tokens.get("account_id")
+            if isinstance(account, str) and account:
+                headers["ChatGPT-Account-ID"] = account
+            return await client.get(USAGE_URL, headers=headers, timeout=30)
+
         try:
-            response = await client.get(USAGE_URL, headers=headers, timeout=30)
+            response = await get()
+            if response.status_code == 401 and self.refresh is not None:
+                await self.refresh()
+                response = await get()
         except (httpx.HTTPError, UnicodeError) as exc:
             raise UsageError("Could not request usage from ChatGPT.") from exc
         if response.status_code in (401, 403):
-            raise AuthError(f"ChatGPT rejected the Codex sign-in (HTTP {response.status_code}). Sign in again in Codex.")
+            raise AuthError(f"ChatGPT rejected the Codex sign-in (HTTP {response.status_code}). Sign in again.")
         if response.status_code != 200:
             raise UsageError(f"ChatGPT usage returned HTTP {response.status_code}.")
         try:

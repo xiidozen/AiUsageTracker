@@ -1,11 +1,13 @@
 import base64
 import json
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi.testclient import TestClient
 
 from tracker.codex import USAGE_URL
+from tracker.codex_login import DEVICE_URL
 from tracker.config import Settings
 from tracker.db import WindowReading
 from tracker.main import create_app
@@ -91,6 +93,7 @@ def test_codex_poll_and_history_are_separate(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "get", get_usage)
     with TestClient(app) as client:
         assert client.get("/api/status?provider=codex").json()["auth"]["connected"]
+        assert client.post("/api/auth/codex/login").status_code == 400
         assert client.get("/api/status?provider=codex").json()["current"] is None
         assert client.post("/api/poll?provider=codex").json() == {"ok": True, "windows": 2}
         auth_file.write_text(json.dumps({"tokens": {"access_token": "second", "account_id": "test-account"}}))
@@ -113,3 +116,62 @@ def test_codex_poll_and_history_are_separate(tmp_path, monkeypatch):
         assert ",seven_day,12.0," in export.text
         assert ",seven_day," not in client.get("/api/export/samples.csv").text
         assert client.get("/api/status?provider=other").status_code == 422
+
+
+def test_codex_device_login_and_refresh(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    calls = []
+    auth_file = tmp_path / "codex" / "auth.json"
+
+    def save_auth(token):
+        auth_file.parent.mkdir(exist_ok=True)
+        auth_file.write_text(json.dumps({"tokens": {"access_token": token}}))
+
+    class Server:
+        async def request(self, method, params):
+            calls.append((method, params))
+            if method == "account/login/start":
+                return {"verificationUrl": DEVICE_URL, "userCode": "ABCD-EFGH", "loginId": "test-login"}
+            assert method == "account/read"
+            save_auth("refreshed")
+            return {}
+
+        async def receive(self):
+            save_auth("expired")
+            return {
+                "method": "account/login/completed",
+                "params": {"loginId": "test-login", "success": True},
+            }
+
+    @asynccontextmanager
+    async def fake_app_server(home):
+        assert home == auth_file.parent
+        yield Server()
+
+    async def get_usage(self, url, *, headers, timeout):
+        assert url == USAGE_URL
+        if headers["Authorization"] == "Bearer expired":
+            return httpx.Response(401)
+        assert headers["Authorization"] == "Bearer refreshed"
+        return httpx.Response(200, json={"rate_limit": None})
+
+    monkeypatch.setattr("tracker.codex_login.app_server", fake_app_server)
+    monkeypatch.setattr(httpx.AsyncClient, "get", get_usage)
+    with TestClient(create_app(make_settings(tmp_path, codex_auth_file=""))) as client:
+        assert not client.get("/api/status?provider=codex").json()["auth"]["connected"]
+        response = client.post("/api/auth/codex/login")
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        login = response.json()
+        assert login["url"] == DEVICE_URL
+        assert login["code"] == "ABCD-EFGH"
+        assert client.get(f"/api/auth/codex/login/{login['attempt']}").json() == {"status": "connected"}
+        assert client.get("/api/status?provider=codex").json()["auth"]["connected"]
+        assert client.post("/api/poll?provider=codex").json()["ok"]
+        assert calls == [
+            ("account/login/start", {"type": "chatgptDeviceCode"}),
+            ("account/read", {"refreshToken": True}),
+        ]
+
+    with TestClient(create_app(make_settings(tmp_path, codex_auth_file=""))) as client:
+        assert client.get("/api/status?provider=codex").json()["auth"]["connected"]

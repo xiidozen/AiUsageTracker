@@ -101,8 +101,17 @@
   <dialog id="codex-account" aria-labelledby="codex-account-title">
     <h2 id="codex-account-title">ChatGPT (Codex) account</h2>
     <p class="muted" id="codex-account-status"></p>
-    <p class="muted small">Sign in to the Codex CLI with ChatGPT and set <code>CODEX_AUTH_FILE</code> on the tracker server to the path of your Codex <code>auth.json</code>. The tracker reads the file each time it polls.</p>
-    <form method="dialog" class="row"><button type="submit">Close</button></form>
+    <p class="muted small" id="codex-login-help">Enable device-code sign-in in your ChatGPT security settings before connecting.</p>
+    <div id="codex-device-step" hidden>
+      <p>Open the OpenAI sign-in page and enter this one-time code.</p>
+      <p><code id="codex-device-code"></code></p>
+      <p><a id="codex-device-link" target="_blank" rel="noopener noreferrer">Open OpenAI sign-in</a></p>
+    </div>
+    <p id="codex-login-message" class="msg" role="status"></p>
+    <form method="dialog" class="row">
+      <button type="button" class="primary" id="codex-login-start">Sign in with ChatGPT</button>
+      <button type="submit">Close</button>
+    </form>
   </dialog>
 
   <script type="module" src="/static/app.js"></script>
