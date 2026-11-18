@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import time
 from contextlib import asynccontextmanager
@@ -34,8 +35,11 @@ def test_demo_dashboard(tmp_path, monkeypatch):
         assert set(dash["timeseries"]) >= {"five_hour", "seven_day"}
         assert dash["summary"]["estimate"]["all_sessions"]["sessions_to_weekly"] > 0
         assert client.get("/api/dashboard?days=0").status_code == 200
-        assert client.get("/").status_code == 200
-        assert client.get("/static/app.js").status_code == 200
+        page = client.get("/")
+        script = client.get("/static/app.js")
+        assert page.status_code == script.status_code == 200
+        script_hash = hashlib.sha256(script.content).hexdigest()[:16]
+        assert f'src="/static/app.js?v={script_hash}"' in page.text
         assert client.get("/api/export/sessions.csv").text.startswith("start,end,peak")
         assert client.post("/api/poll").status_code == 400
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import hashlib
 import io
 import logging
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -270,9 +271,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    # A cached script from a previous image can leave controls in the new HTML inert.
+    script_hash = hashlib.sha256((STATIC_DIR / "app.js").read_bytes()).hexdigest()[:16]
+    dashboard_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace(
+        'src="/static/app.js"', f'src="/static/app.js?v={script_hash}"'
+    )
+
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(dashboard_html, headers={"Cache-Control": "no-cache"})
 
     return app
 
