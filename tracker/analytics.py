@@ -262,7 +262,14 @@ class Model:
     now: float
 
 
-def build_model(db: Database, poll_interval: float, maxed_threshold: float, now: Optional[float] = None) -> Model:
+def build_model(
+    db: Database,
+    poll_interval: float,
+    maxed_threshold: float,
+    now: Optional[float] = None,
+    *,
+    count_idle_slots: bool = True,
+) -> Model:
     now = time.time() if now is None else now
     max_gap = max(3 * poll_interval, 15 * 60.0)
     polls = merge_polls(db.samples(PRIMARY_SESSION_WINDOW), db.samples(PRIMARY_WEEK_WINDOW))
@@ -305,8 +312,8 @@ def build_model(db: Database, poll_interval: float, maxed_threshold: float, now:
         watched=watched,
         session_blind=session_blind,
         week_blind=week_blind,
-        session_idle=idle_intervals(sessions, watched, session_blind + week_locks),
-        week_idle=idle_intervals(weeks, watched, week_blind),
+        session_idle=idle_intervals(sessions, watched, session_blind + week_locks) if count_idle_slots else [],
+        week_idle=idle_intervals(weeks, watched, week_blind) if count_idle_slots else [],
         max_gap=max_gap,
         maxed_threshold=maxed_threshold,
         now=now,

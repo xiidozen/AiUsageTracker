@@ -1,3 +1,3 @@
-"""Track Claude plan usage limits (5-hour sessions and weekly limits) over time."""
+"""Track Claude and ChatGPT (Codex) subscription usage over time."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

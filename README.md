@@ -1,6 +1,6 @@
 # AiUsageTracker
 
-Track your Claude plan's usage limits over time. It polls the same usage data Claude Code's `/usage` command shows, stores every reading, and serves a dashboard with the answers to:
+Track Claude and ChatGPT (Codex) subscription limits over time. The tracker stores each reading and serves a dashboard with the answers to:
 
 - How many 5-hour sessions did I use, and how many did I max out?
 - How many 5-hour sessions went unused?
@@ -31,7 +31,7 @@ Or with the included compose file:
 docker compose up -d
 ```
 
-Open `http://<server>:8080`, click **Connect**, and sign in with your Claude account (see [Connecting your account](#connecting-your-account)). Readings start right away. Statistics fill in as sessions and weeks complete.
+Open `http://<server>:8080`, click **Connect**, and sign in with your Claude account (see [Connecting your account](#connecting-your-account)). Readings start right away. Statistics fill in as sessions and weeks complete. To track your ChatGPT subscription's Codex quota, follow the [Codex setup instructions](#connecting-chatgpt-codex).
 
 To look around before connecting a real account, start it with simulated data:
 
@@ -62,6 +62,16 @@ The usage endpoint accepts a Claude OAuth token with the `user:profile` scope. T
 
 `CLAUDE_OAUTH_TOKEN` also accepts a raw access token, which is never refreshed. Tokens from `claude setup-token` **won't work**: they only carry the `user:inference` scope.
 
+## Connecting ChatGPT (Codex)
+
+The **ChatGPT (Codex)** dashboard tracks the Codex quota on your ChatGPT subscription. It uses the same rate-limit endpoint as the Codex CLI, which is outside the public OpenAI API. Its readings, history and CSV exports are separate from Claude's. Regular ChatGPT conversation limits and OpenAI API billing are outside this integration. [Codex usage client](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs)
+
+1. Sign in to the Codex CLI with ChatGPT on the tracker host. With file-based credential storage, Codex saves the sign-in to `~/.codex/auth.json` by default. For a keyring-based login, set `cli_auth_credentials_store = "file"` in the Codex configuration and sign in again.
+2. Set `CODEX_AUTH_FILE` to the path of that file. For Docker Compose, uncomment the Codex mount and environment setting in `docker-compose.yml`, adjusting the host path if needed. The container runs as UID 10001 by default. Use `user:` to match the file owner if needed and ensure that user can write to the data volume. Keep the credential file private.
+3. Recreate the Compose container with `docker compose up -d` to apply the settings. For a local installation, restart the tracker with the updated environment. Open the dashboard, select **ChatGPT (Codex)**, and click **Poll now** for an immediate reading. The tracker rereads the file on every poll. Codex manages token refresh, so keep the host sign-in current. If usage polling reports an expired or rejected sign-in, sign in again in the Codex CLI.
+
+Reported time windows vary by plan. The tracker displays weekly-only limits when that is what Codex reports.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -76,6 +86,7 @@ The usage endpoint accepts a Claude OAuth token with the `user:profile` scope. T
 | `CLAUDE_CREDENTIALS_FILE` | unset | Path to a Claude Code `.credentials.json` to read tokens from. |
 | `CLAUDE_CREDENTIALS_FILE_REFRESH` | `false` | Let the tracker refresh that file's token and write it back (rotates Claude Code's token). |
 | `CLAUDE_OAUTH_TOKEN` | unset | A raw access token (not refreshed). |
+| `CODEX_AUTH_FILE` | unset | Path to a Codex CLI `auth.json` from a ChatGPT sign-in. Enables Codex polling when set. |
 | `DEMO_MODE` | `false` | Fill an empty database with simulated usage and disable polling. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `USAGE_URL`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_REDIRECT_URI`, `OAUTH_CLIENT_ID`, `OAUTH_SCOPES` | Claude Code's values | Overrides in case the endpoints move. |
@@ -146,4 +157,4 @@ The layout:
 | `tracker/static/` | The dashboard (plain JS and SVG, no build step, no CDN). |
 | `tracker/demo.py` | Usage simulator for demo mode and tests. |
 
-The JSON API behind the dashboard: `GET /api/status`, `GET /api/dashboard?days=30`, `POST /api/poll`, `GET /api/export/samples.csv`, `GET /api/export/sessions.csv`.
+Pass `provider=codex` to select Codex on the dashboard JSON and CSV endpoints. The default provider is Claude. The JSON API behind the dashboard: `GET /api/status`, `GET /api/dashboard?days=30`, `POST /api/poll`, `GET /api/export/samples.csv`, `GET /api/export/sessions.csv`.

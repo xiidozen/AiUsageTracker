@@ -50,6 +50,8 @@ class Settings:
     # them back. Off by default because it rotates the token Claude Code is using.
     credentials_file_refresh: bool = field(default_factory=lambda: _env_bool("CLAUDE_CREDENTIALS_FILE_REFRESH", False))
 
+    codex_auth_file: str = field(default_factory=lambda: _env("CODEX_AUTH_FILE", ""))
+
     usage_url: str = field(default_factory=lambda: _env("USAGE_URL", DEFAULT_USAGE_URL))
     authorize_url: str = field(default_factory=lambda: _env("OAUTH_AUTHORIZE_URL", DEFAULT_AUTHORIZE_URL))
     token_url: str = field(default_factory=lambda: _env("OAUTH_TOKEN_URL", DEFAULT_TOKEN_URL))

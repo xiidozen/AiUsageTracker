@@ -11,6 +11,10 @@
   <div class="wrap" id="app">
     <header class="top">
       <h1>AI Usage Tracker</h1>
+      <nav class="segmented" aria-label="Usage provider">
+        <a href="/" id="provider-claude">Claude</a>
+        <a href="/?provider=codex" id="provider-codex">ChatGPT (Codex)</a>
+      </nav>
       <span class="pill" id="poll-pill"><span class="dot"></span><span id="poll-text">Loading…</span></span>
       <button type="button" id="poll-now">Poll now</button>
       <button type="button" id="account-btn">Account</button>
@@ -92,6 +96,13 @@
       <button type="button" id="disconnect">Disconnect</button>
       <button type="button" id="account-close">Close</button>
     </div>
+  </dialog>
+
+  <dialog id="codex-account" aria-labelledby="codex-account-title">
+    <h2 id="codex-account-title">ChatGPT (Codex) account</h2>
+    <p class="muted" id="codex-account-status"></p>
+    <p class="muted small">Sign in to the Codex CLI with ChatGPT and set <code>CODEX_AUTH_FILE</code> on the tracker server to the path of your Codex <code>auth.json</code>. The tracker reads the file each time it polls.</p>
+    <form method="dialog" class="row"><button type="submit">Close</button></form>
   </dialog>
 
   <script type="module" src="/static/app.js"></script>

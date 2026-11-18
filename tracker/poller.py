@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 
+from . import codex
 from .config import Settings
 from .db import Database
 from .oauth import AuthError, CredentialStore
@@ -18,7 +19,7 @@ log = logging.getLogger("tracker.poller")
 
 
 class Poller:
-    def __init__(self, settings: Settings, db: Database, credentials: CredentialStore):
+    def __init__(self, settings: Settings, db: Database, credentials: CredentialStore | codex.CodexCredentials):
         self.settings = settings
         self.db = db
         self.credentials = credentials
@@ -36,7 +37,12 @@ class Poller:
             now = time.time()
             self.last_attempt = now
             try:
-                body = await fetch_usage(self.client, self.credentials, self.settings.usage_url)
+                if isinstance(self.credentials, codex.CodexCredentials):
+                    body = await self.credentials.fetch_usage(self.client)
+                    readings = codex.parse_usage(body)
+                else:
+                    body = await fetch_usage(self.client, self.credentials, self.settings.usage_url)
+                    readings = parse_usage(body)
             except AuthError as exc:
                 self.last_error = str(exc)
                 self.credentials.last_error = str(exc)
@@ -55,7 +61,6 @@ class Poller:
                 log.warning("poll failed: %s", exc)
                 return {"ok": False, "error": str(exc)}
 
-            readings = parse_usage(body)
             self.db.record_poll(now, readings=readings, raw=body)
             self.last_success = now
             self.last_error = None

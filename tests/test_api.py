@@ -1,8 +1,13 @@
 import base64
+import json
+import time
 
+import httpx
 from fastapi.testclient import TestClient
 
+from tracker.codex import USAGE_URL
 from tracker.config import Settings
+from tracker.db import WindowReading
 from tracker.main import create_app
 
 
@@ -55,3 +60,56 @@ def test_basic_auth(tmp_path, monkeypatch):
         assert client.get("/api/status", headers={"Authorization": f"Basic {good}"}).status_code == 200
         bad = base64.b64encode(b"admin:nope").decode()
         assert client.get("/api/status", headers={"Authorization": f"Basic {bad}"}).status_code == 401
+
+
+def test_codex_poll_and_history_are_separate(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"tokens": {"access_token": "first", "account_id": "test-account"}}))
+    app = create_app(make_settings(tmp_path, codex_auth_file=str(auth_file)))
+    now = time.time()
+    app.state.db.record_poll(now, [WindowReading("five_hour", 55, now + 100)])
+    requests = []
+
+    async def get_usage(self, url, *, headers, timeout):
+        assert url == USAGE_URL
+        assert headers["ChatGPT-Account-ID"] == "test-account"
+        requests.append(headers["Authorization"])
+        return httpx.Response(200, json={
+            "rate_limit": {
+                "primary_window": {"limit_window_seconds": 604800, "used_percent": 12, "reset_at": int(now + 86400)},
+                "secondary_window": None,
+            },
+            "additional_rate_limits": [{
+                "metered_feature": "review",
+                "rate_limit": {
+                    "primary_window": {"limit_window_seconds": 18000, "used_percent": 30, "reset_at": int(now + 100)},
+                },
+            }],
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get_usage)
+    with TestClient(app) as client:
+        assert client.get("/api/status?provider=codex").json()["auth"]["connected"]
+        assert client.get("/api/status?provider=codex").json()["current"] is None
+        assert client.post("/api/poll?provider=codex").json() == {"ok": True, "windows": 2}
+        auth_file.write_text(json.dumps({"tokens": {"access_token": "second", "account_id": "test-account"}}))
+        assert client.post("/api/poll?provider=codex").json()["ok"]
+        assert requests == ["Bearer first", "Bearer second"]
+
+        status = client.get("/api/status?provider=codex").json()
+        windows = {window["window"]: window["utilization"] for window in status["current"]["windows"]}
+        assert windows == {"seven_day": 12, "codex:review:five_hour": 30}
+        assert status["polls"]["ok"] == 2
+        assert client.get("/api/status").json()["polls"]["ok"] == 1
+
+        dashboard = client.get("/api/dashboard?provider=codex").json()
+        assert dashboard["weeks"] and not dashboard["sessions"]
+        assert set(dashboard["timeseries"]) == set(windows)
+        assert client.get("/api/dashboard").json()["sessions"][0]["peak"] == 55
+
+        export = client.get("/api/export/samples.csv?provider=codex")
+        assert "codex-usage-samples.csv" in export.headers["Content-Disposition"]
+        assert ",seven_day,12.0," in export.text
+        assert ",seven_day," not in client.get("/api/export/samples.csv").text
+        assert client.get("/api/status?provider=other").status_code == 422

@@ -11,14 +11,14 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, analytics
+from . import __version__, analytics, codex
 from .config import Settings
 from .db import Database
 from .oauth import AuthError, CredentialStore
@@ -28,6 +28,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime
 log = logging.getLogger("tracker")
 
 STATIC_DIR = Path(__file__).parent / "static"
+Provider = Literal["claude", "codex"]
 PRIMARY_WINDOWS = [analytics.PRIMARY_SESSION_WINDOW, analytics.PRIMARY_WEEK_WINDOW]
 
 
@@ -46,13 +47,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     credentials = CredentialStore(settings)
     poller = Poller(settings, db, credentials)
     demo = os.environ.get("DEMO_MODE", "").lower() in {"1", "true", "yes", "on"}
-    cache: dict = {}
+    codex_db = Database(settings.data_dir / "codex-usage.db")
+    codex_credentials = codex.CodexCredentials(settings.codex_auth_file)
+    codex_poller = Poller(settings, codex_db, codex_credentials)
+    providers = {
+        "claude": (db, credentials, poller),
+        "codex": (codex_db, codex_credentials, codex_poller),
+    }
+    caches: dict = {}
 
-    def model() -> analytics.Model:
+    def model(provider: Provider) -> analytics.Model:
+        db, _, _ = providers[provider]
+        cache = caches.get(provider, {})
         key = (db.revision(), int(time.time() // 60))
         if cache.get("key") != key:
-            cache["key"] = key
-            cache["model"] = analytics.build_model(db, settings.poll_interval, settings.maxed_threshold)
+            cache = {
+                "key": key,
+                "model": analytics.build_model(
+                    db, settings.poll_interval, settings.maxed_threshold,
+                    count_idle_slots=provider == "claude",
+                ),
+            }
+            caches[provider] = cache
         return cache["model"]
 
     @asynccontextmanager
@@ -66,8 +82,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             log.info("DEMO_MODE: the poller is disabled")
         elif settings.poller_enabled:
             poller.start()
-        yield
-        await poller.stop()
+            if settings.codex_auth_file:
+                codex_poller.start()
+        try:
+            yield
+        finally:
+            await poller.stop()
+            await codex_poller.stop()
 
     app = FastAPI(title="AI Usage Tracker", version=__version__, lifespan=lifespan)
     app.state.settings, app.state.db, app.state.poller, app.state.credentials = settings, db, poller, credentials
@@ -94,7 +115,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/status")
-    def status():
+    def status(provider: Provider = "claude"):
+        db, credentials, poller = providers[provider]
         latest = db.latest_poll(ok_only=True)
         current = None
         if latest:
@@ -122,8 +144,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
 
     @app.get("/api/dashboard")
-    def dashboard(days: float = 30, points: int = 600):
-        m = model()
+    def dashboard(days: float = 30, points: int = 600, provider: Provider = "claude"):
+        db, _, _ = providers[provider]
+        m = model(provider)
         now = m.now
         start = None if days <= 0 else now - days * 86400
         summary = analytics.summarize(m, start=start)
@@ -148,10 +171,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
 
     @app.post("/api/poll")
-    async def poll_now():
+    async def poll_now(provider: Provider = "claude"):
         if demo:
             raise HTTPException(400, "Polling is disabled in demo mode")
-        return await poller.poll_once()
+        return await providers[provider][2].poll_once()
 
     @app.post("/api/auth/login")
     def auth_login():
@@ -181,7 +204,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return credentials.status()
 
     @app.get("/api/export/samples.csv")
-    def export_samples():
+    def export_samples(provider: Provider = "claude"):
+        db, _, _ = providers[provider]
         def rows():
             buf = io.StringIO()
             writer = csv.writer(buf)
@@ -195,12 +219,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             yield buf.getvalue()
 
         return StreamingResponse(
-            rows(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="usage-samples.csv"'}
+            rows(), media_type="text/csv", headers={"Content-Disposition": _attachment(provider, "usage-samples.csv")}
         )
 
     @app.get("/api/export/sessions.csv")
-    def export_sessions():
-        m = model()
+    def export_sessions(provider: Provider = "claude"):
+        m = model(provider)
         buf = io.StringIO()
         writer = csv.writer(buf)
         fields = ["start", "end", "peak", "maxed", "locked_minutes", "session_delta", "weekly_delta", "full_session_cost"]
@@ -209,7 +233,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             d = analytics.session_dict(s, m.now, settings.maxed_threshold)
             writer.writerow([_iso(d["start"]), _iso(d["end"])] + [d[f] for f in fields[2:]])
         return Response(
-            buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="sessions.csv"'}
+            buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": _attachment(provider, "sessions.csv")}
         )
 
     @app.exception_handler(AuthError)
@@ -223,6 +247,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
+
+
+def _attachment(provider: Provider, name: str) -> str:
+    prefix = "codex-" if provider == "codex" else ""
+    return f'attachment; filename="{prefix}{name}"'
 
 
 def _iso(ts: Optional[float]) -> str:

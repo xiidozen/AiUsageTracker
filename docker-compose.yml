@@ -9,8 +9,11 @@ services:
       - "8080:8080"
     volumes:
       - tracker-data:/data
+      # Optional Codex CLI sign-in, mounted as a directory so file replacements are visible:
+      # - "${HOME}/.codex:/codex:ro"
     environment:
       POLL_INTERVAL_SECONDS: "300"
+      # CODEX_AUTH_FILE: "/codex/auth.json"
       # Protect the dashboard (and the account connection) with a password:
       # TRACKER_PASSWORD: "change-me"
       # Try the dashboard with simulated data instead of a real account:

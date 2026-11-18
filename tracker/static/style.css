@@ -170,6 +170,10 @@ header.top h1 { font-size: 18px; font-weight: 600; margin: 0; margin-right: auto
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segmented button { border: 0; border-radius: 0; padding: 6px 12px; }
 .segmented button + button { border-left: 1px solid var(--border); }
+.segmented a { padding: 6px 12px; font-size: 13px; text-decoration: none; }
+.segmented a + a { border-left: 1px solid var(--border); }
+.segmented a:focus-visible { outline-offset: -2px; }
+.segmented a[aria-current="page"],
 .segmented button[aria-pressed="true"] { background: var(--wash); font-weight: 600; }
 
 .grid { display: grid; gap: 16px; }

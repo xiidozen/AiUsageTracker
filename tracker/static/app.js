@@ -2,6 +2,15 @@ import { columnChart, heatmap, hideTooltip, htmlEl, lineChart, renderTable, scat
 
 const $ = (sel) => document.querySelector(sel);
 
+const isCodex = new URLSearchParams(location.search).get("provider") === "codex";
+const providerName = isCodex ? "ChatGPT (Codex)" : "Claude";
+
+function providerUrl(path) {
+  const url = new URL(path, location.origin);
+  if (isCodex) url.searchParams.set("provider", "codex");
+  return url.pathname + url.search;
+}
+
 const COLORS = {
   session: "var(--series-session)",
   week: "var(--series-week)",
@@ -23,7 +32,7 @@ const state = {
   days: 30,
   status: null,
   data: null,
-  lastPollTs: null,
+  lastPollTs: undefined,
   hidden: new Set(),
   tableView: new Set(),
   sessionsShown: 25,
@@ -123,9 +132,11 @@ function renderHeader() {
   let message = null;
   let cls = "banner";
   if (s.demo) {
-    message = "Demo mode: these numbers are simulated. Remove DEMO_MODE to track your real account.";
+    message = isCodex ? "Polling is disabled in demo mode." : "Demo mode: these numbers are simulated. Remove DEMO_MODE to track your real account.";
   } else if (!s.auth.connected) {
-    message = "Connect your Claude account to start tracking. Readings are collected from then on.";
+    message = isCodex
+      ? s.auth.error || "Set CODEX_AUTH_FILE to connect your Codex CLI sign-in."
+      : "Connect your Claude account to start tracking. Readings are collected from then on.";
   } else if (s.last_poll && !s.last_poll.ok) {
     message = `The last poll failed: ${s.last_poll.error}`;
     cls += " error";
@@ -144,9 +155,10 @@ function meterCard(el, title, reading, now, idleText) {
   el.replaceChildren();
   htmlEl("h2", { text: title }, el);
   const active = reading && reading.utilization !== null && reading.resets_at && reading.resets_at > now;
-  const util = active ? reading.utilization : 0;
+  const reportedWithoutReset = isCodex && reading && !reading.resets_at;
+  const util = active || reportedWithoutReset ? reading.utilization : 0;
   const value = htmlEl("div", { class: "meter-value" }, el);
-  value.append(pct(util));
+  value.append(pct(reading ? util : null));
   htmlEl("small", { text: "used" }, value);
   const sev = severity(util);
   const meter = htmlEl("div", { class: "meter", role: "meter", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(util), "aria-label": title }, el);
@@ -159,9 +171,9 @@ function meterCard(el, title, reading, now, idleText) {
   }
   const st = htmlEl("span", { class: "state" }, foot);
   htmlEl("span", { text: sev.icon, style: { color: sev.color }, "aria-hidden": "true" }, st);
-  st.append(active ? sev.label : "Not started");
+  st.append(active || reportedWithoutReset ? sev.label : isCodex ? "Reset passed" : "Not started");
   htmlEl("span", {
-    text: active ? `Resets in ${duration(reading.resets_at - now)} · ${dateTime(reading.resets_at, { weekday: "short" })}` : idleText,
+    text: active ? `Resets in ${duration(reading.resets_at - now)} · ${dateTime(reading.resets_at, { weekday: "short" })}` : reportedWithoutReset ? "Reset time unavailable" : idleText,
   }, foot);
 }
 
@@ -170,8 +182,12 @@ function renderCurrent() {
   const now = s.now;
   const windows = s.current ? s.current.windows : [];
   const find = (k) => windows.find((w) => w.window === k);
-  meterCard($("#card-session"), "5-hour session", find("five_hour"), now, "Starts with your next message");
-  meterCard($("#card-week"), "Weekly limit", find("seven_day"), now, "Starts with your next message");
+  for (const [id, key] of [["session", "five_hour"], ["week", "seven_day"]]) {
+    const card = $(`#card-${id}`);
+    const reading = find(key);
+    card.hidden = isCodex && Boolean(s.current) && !reading;
+    meterCard(card, windowLabel(key), reading, now, isCodex ? "Waiting for the next reading" : "Starts with your next message");
+  }
 
   const other = $("#card-other");
   other.replaceChildren();
@@ -253,14 +269,21 @@ function renderTiles() {
     htmlEl("div", { class: "value", text: value }, t);
     if (note) htmlEl("div", { class: "note", text: note }, t);
   };
-  tile("5-hour sessions used", String(s.used), `of ${s.max_possible} possible back-to-back`);
-  tile("Maxed-out sessions", String(s.maxed), s.used ? `${Math.round((100 * s.maxed) / s.used)}% of sessions used` : null);
-  tile("Idle 5-hour slots", String(s.idle_slots), "5-hour blocks with no session");
-  tile("Average session peak", pct(s.avg_peak), s.median_peak !== null ? `median ${pct(s.median_peak)}` : null);
-  tile("Unused in started sessions", num(s.unused_capacity), "sessions' worth of capacity");
-  tile("Weeks at the limit", `${w.maxed} of ${w.completed}`, "completed weekly periods");
-  tile("Unused weekly capacity", `${num(w.unused_capacity)} wk`, w.avg_final !== null ? `average ${pct(w.avg_final)} used at reset` : null);
-  tile("Locked out", `${num(s.locked_hours)} h`, `by the 5-hour limit · ${num(w.locked_hours)} h weekly`);
+  const hasSession = !isCodex || "five_hour" in state.data.timeseries;
+  if (hasSession) {
+    tile("5-hour sessions used", String(s.used), isCodex ? null : `of ${s.max_possible} possible back-to-back`);
+    tile("Maxed-out sessions", String(s.maxed), s.used ? `${Math.round((100 * s.maxed) / s.used)}% of sessions used` : null);
+    if (!isCodex) tile("Idle 5-hour slots", String(s.idle_slots), "5-hour blocks with no session");
+    tile("Average session peak", pct(s.avg_peak), s.median_peak !== null ? `median ${pct(s.median_peak)}` : null);
+    tile("Unused in started sessions", num(s.unused_capacity), "sessions' worth of capacity");
+  }
+  const hasWeek = !isCodex || "seven_day" in state.data.timeseries;
+  if (hasWeek) {
+    tile("Weeks at the limit", `${w.maxed} of ${w.completed}`, "completed weekly periods");
+    tile("Unused weekly capacity", `${num(w.unused_capacity)} wk`, w.avg_final !== null ? `average ${pct(w.avg_final)} used at reset` : null);
+  }
+  if (hasSession) tile("Locked out", `${num(s.locked_hours)} h`, `by the 5-hour limit · ${num(w.locked_hours)} h weekly`);
+  else if (hasWeek) tile("Locked out", `${num(w.locked_hours)} h`, "by the weekly limit");
 }
 
 // -- chart cards --------------------------------------------------------------------
@@ -337,7 +360,7 @@ function renderTimeline() {
   chartCard($("#chart-timeline"), {
     id: "timeline",
     title: "Usage over time",
-    sub: "How much of each limit was used, as reported by Claude. Click a legend item to show or hide it.",
+    sub: `How much of each limit was used, as reported by ${providerName}. Click a legend item to show or hide it.`,
     legend,
     draw: (el) =>
       lineChart(el, {
@@ -366,12 +389,12 @@ function renderWeekCharts() {
   const stack = [
     { key: "maxed", label: "Maxed out", color: COLORS.maxed },
     { key: "partial", label: "Partly used", color: COLORS.partial },
-    { key: "idle", label: "Idle slots", color: COLORS.idle },
+    ...(!isCodex ? [{ key: "idle", label: "Idle slots", color: COLORS.idle }] : []),
   ];
   chartCard($("#chart-weeks"), {
     id: "weeks",
     title: "5-hour sessions per weekly period",
-    sub: "Sessions you maxed out, sessions you started but didn't max, and 5-hour slots left idle.",
+    sub: isCodex ? "5-hour sessions with reported usage." : "Sessions you maxed out, sessions you started but didn't max, and 5-hour slots left idle.",
     legend: stack.map((s) => ({ label: s.label, color: s.color, kind: "rect" })),
     draw: (el) =>
       columnChart(el, {
@@ -383,7 +406,7 @@ function renderWeekCharts() {
         })),
         stack,
         valueFormat: (v) => `${Math.round(v)}`,
-        ariaLabel: "Stacked columns of maxed, partly used and idle 5-hour sessions per weekly period",
+        ariaLabel: "5-hour sessions per weekly period",
         empty: "No weekly periods in this range yet",
       }),
     table: {
@@ -391,7 +414,7 @@ function renderWeekCharts() {
         { label: "Week", value: weekTitle },
         { label: "Maxed out", num: true, value: (w) => w.sessions_maxed },
         { label: "Partly used", num: true, value: (w) => w.sessions_partial },
-        { label: "Idle slots", num: true, value: (w) => w.idle_slots },
+        ...(!isCodex ? [{ label: "Idle slots", num: true, value: (w) => w.idle_slots }] : []),
       ],
       rows: [...state.data.weeks],
     },
@@ -559,7 +582,7 @@ function renderTables() {
     { label: "Limit", value: (w) => statusTag(w.maxed, `Hit after ${num(w.to_limit?.hours_after_start)} h`, w.active ? "In progress" : "Not reached") },
     { label: "Sessions", num: true, value: (w) => w.sessions_used },
     { label: "Maxed", num: true, value: (w) => w.sessions_maxed },
-    { label: "Idle slots", num: true, value: (w) => w.idle_slots },
+    ...(!isCodex ? [{ label: "Idle slots", num: true, value: (w) => w.idle_slots }] : []),
     { label: "Full-session equiv.", num: true, value: (w) => num(w.session_equivalents) },
     { label: "Sessions to limit", num: true, value: (w) => (w.to_limit ? w.to_limit.sessions : "–") },
     { label: "Locked out", num: true, value: (w) => (w.locked_hours ? `${num(w.locked_hours)} h` : "–") },
@@ -604,7 +627,8 @@ function renderCoverage() {
 // -- loading -----------------------------------------------------------------------------
 
 async function loadStatus() {
-  state.status = await api("/api/status");
+  state.status = await api(providerUrl("/api/status"));
+  if ($("#codex-account").open) renderCodexAccountStatus();
   renderHeader();
   renderCurrent();
   const ts = state.status.last_poll?.ts ?? null;
@@ -617,10 +641,15 @@ async function loadStatus() {
 async function loadDashboard() {
   $("#app").classList.add("loading");
   try {
-    state.data = await api(`/api/dashboard?days=${state.days}`);
+    state.data = await api(providerUrl(`/api/dashboard?days=${state.days}`));
   } finally {
     $("#app").classList.remove("loading");
   }
+  const hasSession = !isCodex || "five_hour" in state.data.timeseries;
+  const hasWeek = !isCodex || "seven_day" in state.data.timeseries;
+  for (const id of ["hero", "chart-weeks", "chart-cost"]) $(`#${id}`).hidden = !(hasSession && hasWeek);
+  for (const id of ["chart-peaks", "chart-heatmap", "table-sessions"]) $(`#${id}`).hidden = !hasSession;
+  for (const id of ["chart-weekly-final", "table-weeks"]) $(`#${id}`).hidden = !hasWeek;
   renderHero();
   renderTiles();
   renderTimeline();
@@ -672,7 +701,17 @@ function renderAccountStatus() {
   el.textContent = parts.join(" · ") + (a.error ? `. Last error: ${a.error}` : ".");
 }
 
+function renderCodexAccountStatus() {
+  const auth = state.status?.auth;
+  $("#codex-account-status").textContent = auth?.error || (auth?.connected ? "Using the Codex CLI sign-in." : "No Codex sign-in configured.");
+}
+
 function openAccount() {
+  if (isCodex) {
+    renderCodexAccountStatus();
+    $("#codex-account").showModal();
+    return;
+  }
   renderAccountStatus();
   $("#signin-msg").textContent = "";
   $("#import-msg").textContent = "";
@@ -739,7 +778,7 @@ function setupAccount() {
   $("#poll-now").addEventListener("click", async () => {
     $("#poll-now").disabled = true;
     try {
-      await api("/api/poll", { method: "POST" });
+      await api(providerUrl("/api/poll"), { method: "POST" });
     } catch (err) {
       showError(err);
     }
@@ -753,6 +792,10 @@ async function refreshSoon() {
   setTimeout(() => loadStatus().then(renderAccountStatus).catch(() => {}), 4000);
 }
 
+$(isCodex ? "#provider-codex" : "#provider-claude").setAttribute("aria-current", "page");
+for (const link of document.querySelectorAll('footer a[href^="/api/export/"]')) {
+  link.href = providerUrl(link.getAttribute("href"));
+}
 setupRange();
 setupAccount();
 loadStatus().catch(showError);
