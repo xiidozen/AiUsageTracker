@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from tracker.codex import USAGE_URL
 from tracker.codex_login import DEVICE_URL
 from tracker.config import Settings
-from tracker.db import WindowReading
+from tracker.db import Database, WindowReading
 from tracker.main import create_app
 
 
@@ -179,3 +179,28 @@ def test_codex_device_login_and_refresh(tmp_path, monkeypatch):
 
     with TestClient(create_app(make_settings(tmp_path, codex_auth_file=""))) as client:
         assert client.get("/api/status?provider=codex").json()["auth"]["connected"]
+
+
+def test_status_projects_exhaustion_for_supported_windows(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    now = time.time()
+    session_reset = now + 3600
+    week_reset = now + 86400
+    with TestClient(create_app(make_settings(tmp_path, poll_interval=300))) as client:
+        for provider, name in [("claude", "usage.db"), ("codex", "codex-usage.db")]:
+            db = Database(tmp_path / name)
+            db.record_poll(now - 900, [WindowReading("five_hour", 60, session_reset)])
+            db.record_poll(now - 3600, [WindowReading("seven_day", 10, week_reset)])
+            db.record_poll(now, [
+                WindowReading("five_hour", 80, session_reset),
+                WindowReading("seven_day", 20, week_reset),
+            ])
+            windows = {
+                reading["window"]: reading
+                for reading in client.get(f"/api/status?provider={provider}").json()["current"]["windows"]
+            }
+            assert windows["seven_day"]["projected_exhaustion_at"] == now + 28800
+            if provider == "claude":
+                assert windows["five_hour"]["projected_exhaustion_at"] == now + 900
+            else:
+                assert "projected_exhaustion_at" not in windows["five_hour"]

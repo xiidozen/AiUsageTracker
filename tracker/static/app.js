@@ -175,6 +175,16 @@ function meterCard(el, title, reading, now, idleText) {
   htmlEl("span", {
     text: active ? `Resets in ${duration(reading.resets_at - now)} · ${dateTime(reading.resets_at, { weekday: "short" })}` : reportedWithoutReset ? "Reset time unavailable" : idleText,
   }, foot);
+  if (active && "projected_exhaustion_at" in reading && util < 100) {
+    const projected = reading.projected_exhaustion_at;
+    let text = "Run-out estimate unavailable at the current pace";
+    if (projected) {
+      text = projected < reading.resets_at
+        ? `Projected to run out in ${duration(projected - now)} · ${dateTime(projected, { weekday: "short" })}`
+        : "Projected to last until reset at the current pace";
+    }
+    htmlEl("p", { class: "meter-projection", text }, el);
+  }
 }
 
 function renderCurrent() {

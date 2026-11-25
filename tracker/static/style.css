@@ -203,6 +203,7 @@ header.top h1 { font-size: 18px; font-weight: 600; margin: 0; margin-right: auto
 }
 .meter > span { display: block; height: 100%; border-radius: 5px; background: var(--meter, var(--accent)); }
 .meter-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--text-2); font-size: 13px; margin-top: 8px; flex-wrap: wrap; }
+.meter-projection { margin: 8px 0 0; color: var(--text-2); font-size: 13px; }
 .state { display: inline-flex; gap: 6px; align-items: center; }
 .minor-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
 .minor-list li { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; }

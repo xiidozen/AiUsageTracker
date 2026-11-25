@@ -44,6 +44,7 @@ If the dashboard is reachable by anyone else, set `TRACKER_PASSWORD` in `docker-
 ## The dashboard
 
 - **Current usage**: the active 5-hour session and weekly limit, with time to reset, plus any other limits your plan reports (for example, per-model weekly limits).
+- **Projected run-out time** for Claude’s 5-hour limit and both providers’ weekly limits. The estimate uses observed increases in the active window over the last hour for the 5-hour limit and the last 24 hours for weekly limits. Projections require at least 15 minutes of observations for the 5-hour limit and one hour for weekly limits. If the projected run-out is after the reset, the card shows that the limit is expected to last until reset.
 - **Headline number**: how many maxed-out 5-hour sessions fill a weekly limit, with the range across sessions and two cross-checks.
 - **Summary tiles**: sessions used, maxed out and idle; average session peak; weeks at the limit; unused weekly capacity; time locked out.
 - **Charts**: usage over time; sessions per weekly period (maxed, partly used, idle); weekly limit used at each reset; the weekly cost of each session; distribution of session peaks; when your sessions start (weekday × hour).

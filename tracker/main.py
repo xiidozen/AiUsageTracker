@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from . import __version__, analytics, codex
 from .codex_login import CodexLogin
 from .config import Settings
-from .db import Database
+from .db import Database, Sample
 from .oauth import AuthError, CredentialStore
 from .poller import Poller
 
@@ -134,20 +134,31 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def status(provider: Provider = "claude"):
         db, credentials, poller = providers[provider]
         latest = db.latest_poll(ok_only=True)
+        now = time.time()
         current = None
         if latest:
+            windows = []
+            for reading in latest["readings"]:
+                window = {
+                    "window": reading.window, "utilization": reading.utilization, "resets_at": reading.resets_at,
+                }
+                if reading.window == analytics.PRIMARY_WEEK_WINDOW or (
+                    provider == "claude" and reading.window == analytics.PRIMARY_SESSION_WINDOW
+                ):
+                    sample = Sample(latest["ts"], reading.utilization, reading.resets_at)
+                    window["projected_exhaustion_at"] = analytics.project_exhaustion(
+                        db, reading.window, sample, now, settings.poll_interval,
+                    )
+                windows.append(window)
             current = {
                 "ts": latest["ts"],
-                "windows": [
-                    {"window": r.window, "utilization": r.utilization, "resets_at": r.resets_at}
-                    for r in latest["readings"]
-                ],
+                "windows": windows,
                 "extra_usage": (latest["raw"] or {}).get("extra_usage"),
             }
         last_any = db.latest_poll()
         return {
             "version": __version__,
-            "now": time.time(),
+            "now": now,
             "demo": demo,
             "auth": credentials.status(),
             "codex_device_login": provider == "codex" and codex_login is not None,

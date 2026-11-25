@@ -1,6 +1,6 @@
 from tracker import analytics
 from tracker.analytics import FIVE_HOURS, WEEK
-from tracker.db import Database, WindowReading
+from tracker.db import Database, Sample, WindowReading
 from tracker.demo import simulate
 
 H = 3600.0
@@ -171,3 +171,39 @@ def test_demo_simulation_recovers_session_cost(tmp_path):
     # The simulation charges 12.5% x noise x a weekly load factor (0.7-1.4).
     assert 9.0 < est["full_session_cost"] < 18.0
     assert len(model.weeks) >= 6
+
+
+def test_exhaustion_requires_fresh_growth_in_current_window(tmp_path):
+    db = make_db(tmp_path)
+    window = analytics.PRIMARY_SESSION_WINDOW
+    reset = T0 + H
+    latest = Sample(T0, 80, reset)
+    db.record_poll(T0 - 1200, [WindowReading(window, 50, T0 - 300)])
+    db.record_poll(T0 - 900, [WindowReading(window, 80, reset)])
+    assert analytics.project_exhaustion(db, window, latest, T0, INTERVAL) is None
+
+    db.record_poll(T0 - 300, [WindowReading(window, 90, reset)])
+    assert analytics.project_exhaustion(db, window, latest, T0, INTERVAL) is None
+    assert analytics.project_exhaustion(db, window, latest, T0 + 901, INTERVAL) is None
+
+
+
+def test_weekly_exhaustion_uses_same_window_readings_across_polling_gap(tmp_path):
+    db = make_db(tmp_path)
+    window = analytics.PRIMARY_WEEK_WINDOW
+    reset = T0 + 48 * H
+    db.record_poll(T0 - 24 * H, [WindowReading(window, 35, reset)])
+    db.record_poll(T0 - 1500, [WindowReading(window, 40, reset)])
+    db.record_poll(T0 - 300, [WindowReading(window, 40, reset)])
+    latest = Sample(T0, 41, reset)
+
+    assert analytics.project_exhaustion(db, window, latest, T0, INTERVAL) == T0 + 236 * H
+
+
+def test_exhaustion_rejects_short_observation_spans(tmp_path):
+    db = make_db(tmp_path)
+    for window, span in [(analytics.PRIMARY_SESSION_WINDOW, 899), (analytics.PRIMARY_WEEK_WINDOW, 3599)]:
+        reset = T0 + H
+        db.record_poll(T0 - span, [WindowReading(window, 40, reset)])
+        latest = Sample(T0, 41, reset)
+        assert analytics.project_exhaustion(db, window, latest, T0, INTERVAL) is None

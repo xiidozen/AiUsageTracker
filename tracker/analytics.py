@@ -99,6 +99,40 @@ def _active(sample: Optional[Sample]) -> bool:
     )
 
 
+def project_exhaustion(
+    db: Database, window: str, latest: Sample, now: float, poll_interval: float,
+) -> Optional[float]:
+    """Project 100% usage from the recent pace within the current limit window."""
+    resets_at, utilization = latest.resets_at, latest.utilization
+    max_reading_age = max(3 * poll_interval, 15 * 60)
+    if (resets_at is None or resets_at <= now or utilization is None
+            or not 0 <= utilization < 100 or now - latest.ts > max_reading_age):
+        return None
+
+    if window == PRIMARY_SESSION_WINDOW:
+        duration, lookback, tolerance = FIVE_HOURS, 3600, SESSION_KEY_TOLERANCE
+        min_span = 15 * 60
+    else:
+        duration, lookback, tolerance = WEEK, 86400, WEEK_KEY_TOLERANCE
+        min_span = 3600
+    start = max(resets_at - duration, latest.ts - lookback)
+    baseline = latest
+    for sample in reversed(db.samples(window, start=start, end=latest.ts)):
+        if sample.ts >= baseline.ts:
+            continue
+        if (not _same_window(sample, latest, tolerance) or not _active(sample)
+                or not 0 <= sample.utilization <= baseline.utilization):
+            break
+        baseline = sample
+
+    increase = utilization - baseline.utilization
+    span = latest.ts - baseline.ts
+    if increase <= 0 or span < min_span:
+        return None
+    projected = latest.ts + (100 - utilization) * span / increase
+    return projected if math.isfinite(projected) and projected > now else None
+
+
 def effective_utilization(sample: Sample) -> Optional[float]:
     """Utilization as of the sample time; a window past its reset counts as 0."""
     if sample.utilization is None:
